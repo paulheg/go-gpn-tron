@@ -2,7 +2,6 @@ package strategies
 
 import (
 	gpntron "go-gpn-tron/internal/gpn-tron"
-	"log"
 	"math/rand"
 )
 
@@ -16,31 +15,8 @@ type Random struct {
 
 // Tick implements gpntron.Receiver.
 func (r *Random) Tick(ex gpntron.Executor) gpntron.Move {
-	if len(r.lastMove) == 0 || r.lastMove == gpntron.Nothing {
-		r.lastMove = r.randomMove()
-	}
+	r.lastMove = r.ChooseNonColliding()
 
-	if r.n > 3 {
-		r.lastMove = r.randomMove()
-		r.n = 0
-	}
-
-	for id, player := range r.players {
-		if id != r.id {
-			if isPlayerDangerous(*r.players[r.id], *player, r.lastMove) {
-				r.lastMove = r.randomMove()
-			}
-		}
-	}
-
-	for r.collision(r.lastMove) {
-		r.lastMove = r.randomMove()
-		r.n = 0
-	}
-
-	r.n += 1
-
-	log.Println(r.PrintField())
 	return r.lastMove
 }
 

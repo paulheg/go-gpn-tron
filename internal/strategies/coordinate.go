@@ -5,8 +5,61 @@ import (
 	"math"
 )
 
+var (
+	TopLeft     = []gpntron.Move{gpntron.Up, gpntron.Left}
+	TopRight    = []gpntron.Move{gpntron.Up, gpntron.Right}
+	BottomLeft  = []gpntron.Move{gpntron.Down, gpntron.Left}
+	BottomRight = []gpntron.Move{gpntron.Down, gpntron.Right}
+
+	Corners = [][]gpntron.Move{TopLeft, TopRight, BottomLeft, BottomRight}
+)
+
 type Coordinate struct {
 	X, Y int
+}
+
+func (c Coordinate) Equals(cord Coordinate) bool {
+	return cord.X == c.X && cord.Y == c.Y
+}
+
+func (c Coordinate) OffsetD(directions ...gpntron.Move) Coordinate {
+	for _, direction := range directions {
+		c = c.Offset(direction, 1)
+	}
+
+	return c
+}
+
+func (c Coordinate) Offset(direction gpntron.Move, length uint) Coordinate {
+
+	switch direction {
+	case gpntron.Down:
+		return c.Add(Coordinate{
+			Y: int(length),
+		})
+	case gpntron.Left:
+		return c.Add(Coordinate{
+			X: -int(length),
+		})
+	case gpntron.Right:
+		return c.Add(Coordinate{
+			X: int(length),
+		})
+	case gpntron.Up:
+		return c.Add(Coordinate{
+			Y: -int(length),
+		})
+	default:
+		return c
+	}
+}
+
+func (c Coordinate) Add(cord Coordinate) Coordinate {
+	return Coordinate{
+		X: c.X + cord.X,
+		Y: c.Y + cord.Y,
+	}
+
 }
 
 func (c Coordinate) Delta(coord Coordinate) Coordinate {

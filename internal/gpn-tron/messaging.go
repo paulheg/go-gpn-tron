@@ -49,11 +49,15 @@ func execute(input string, recv Receiver, ex Executor) {
 		move := recv.Tick(ex)
 		ex.Move(move)
 	case Die:
-		ids := make([]PlayerID, len(args)-1)
+		ids := []PlayerID{}
 
 		for i := 1; i < len(args); i++ {
-			id, _ := strconv.Atoi(args[i])
-			ids = append(ids, PlayerID(id))
+			id, err := strconv.Atoi(args[i])
+			if err == nil {
+				ids = append(ids, PlayerID(id))
+			} else {
+				log.Printf("could not parse %s", args[i])
+			}
 		}
 
 		recv.Die(ex, ids...)
@@ -124,6 +128,10 @@ const (
 
 type PlayerID int
 
+func (i PlayerID) Empty() bool {
+	return i == PlayerID(-1)
+}
+
 type Move string
 
 const (
@@ -134,7 +142,11 @@ const (
 	Nothing Move = "nothing"
 )
 
-func (mv Move) Opposite(m Move) bool {
+var Directions = []Move{
+	Up, Down, Left, Right,
+}
+
+func (mv Move) IsOpposite(m Move) bool {
 
 	if mv != m {
 		return (mv == Up && m == Down) ||
@@ -144,4 +156,31 @@ func (mv Move) Opposite(m Move) bool {
 	}
 
 	return false
+}
+
+func (mv Move) Opposite() Move {
+	switch mv {
+	case Down:
+		return Up
+	case Up:
+		return Down
+	case Left:
+		return Right
+	case Right:
+		return Left
+	}
+
+	return Nothing
+}
+
+func (mv Move) Tangential() Move {
+	switch mv {
+	case Up:
+	case Down:
+		return Left
+	case Left:
+	case Right:
+		return Up
+	}
+	return Nothing
 }

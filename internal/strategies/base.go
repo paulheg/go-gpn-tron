@@ -1,17 +1,20 @@
 package strategies
 
 import (
+	"cmp"
 	gpntron "go-gpn-tron/internal/gpn-tron"
 	"log"
-	"strings"
+	"slices"
 )
 
+var _ gpntron.BaseReceiver = (*Base)(nil)
+
 type Base struct {
+	Arena Arena
+
 	alive          bool
-	height, width  int
 	id             gpntron.PlayerID
 	players        map[gpntron.PlayerID]*Player
-	field          map[Coordinate]gpntron.PlayerID
 	playerPosition Coordinate
 }
 
@@ -24,27 +27,20 @@ func (b *Base) Error(ex gpntron.Executor, err string) {
 }
 
 func (b *Base) Game(ex gpntron.Executor, width int, height int, id gpntron.PlayerID) {
-	b.width = width
-	b.height = height
 	b.id = id
+	b.Arena = *NewArena(height, width)
 
 	b.players = make(map[gpntron.PlayerID]*Player)
-	b.field = make(map[Coordinate]gpntron.PlayerID)
 }
 
 func (b *Base) Position(ex gpntron.Executor, id gpntron.PlayerID, x int, y int) {
-	b.field[Coordinate{x, y}] = id
 
-	b.players[id].Tiles = append(b.players[id].Tiles, Coordinate{
-		X: x,
-		Y: y,
-	})
+	coord := Coordinate{X: x, Y: y}
+
+	b.Arena.Set(coord, id)
 
 	if id == b.id {
-		b.playerPosition = Coordinate{
-			X: x,
-			Y: y,
-		}
+		b.playerPosition = coord
 	}
 }
 
@@ -53,24 +49,20 @@ func (b *Base) Player(ex gpntron.Executor, id gpntron.PlayerID, name string) {
 
 	if _, ok := b.players[id]; !ok {
 		b.players[id] = &Player{
-			Name:  name,
-			Tiles: make([]Coordinate, 0),
+			Name: name,
 		}
 	}
 }
 
 func (b *Base) Die(ex gpntron.Executor, ids ...gpntron.PlayerID) {
 	for _, id := range ids {
-
 		if id == b.id {
 			b.alive = false
 			log.Println("You died!")
-		} else {
-			log.Println(b.players[id].Name, "died")
-
-			b.clearPlayer(id)
 		}
 	}
+
+	b.Arena.Clear(ids...)
 }
 
 func (b *Base) Message(ex gpntron.Executor, id gpntron.PlayerID, message string) {
@@ -90,87 +82,123 @@ func (b *Base) Lose(ex gpntron.Executor, wins int, losses int) {
 }
 
 func (b *Base) clear() {
-	for player := range b.players {
-		delete(b.players, player)
-	}
 
-	for tile := range b.field {
-		delete(b.field, tile)
+	for player := range b.players {
+		b.Arena.Clear(player)
+		delete(b.players, player)
 	}
 
 	b.alive = true
 }
 
-func (b *Base) clearPlayer(id gpntron.PlayerID) {
-
-	for _, coord := range b.players[id].Tiles {
-		delete(b.field, coord)
-	}
+func (b *Base) Collision(move gpntron.Move) bool {
+	return b.CollisionLookahead(move, 1)
 }
 
-func (b *Base) calcNextPos(move gpntron.Move) Coordinate {
-
-	nextPos := Coordinate{
-		X: b.playerPosition.X,
-		Y: b.playerPosition.Y,
+func (b *Base) CheckCorners() bool {
+	for _, corner := range Corners {
+		check := b.playerPosition.OffsetD(corner...)
+		if !b.Arena.Field(check).Empty() {
+			return true
+		}
 	}
 
-	switch move {
-	case gpntron.Down:
-		nextPos.Y += 1
-	case gpntron.Up:
-		nextPos.Y -= 1
-	case gpntron.Left:
-		nextPos.X -= 1
-	case gpntron.Right:
-		nextPos.X += 1
-	}
-
-	if nextPos.X >= b.width {
-		nextPos.X = 0
-	}
-
-	if nextPos.X < 0 {
-		nextPos.X = b.width - 1
-	}
-
-	if nextPos.Y >= b.height {
-		nextPos.Y = 0
-	}
-
-	if nextPos.Y < 0 {
-		nextPos.Y = b.height - 1
-	}
-
-	return nextPos
+	return false
 }
 
-func (b *Base) collision(move gpntron.Move) bool {
-	_, ok := b.field[b.calcNextPos(move)]
-	return ok
+func (b *Base) TunnelCollision(direction gpntron.Move, length uint) bool {
+	moves := make([]gpntron.Move, length)
+
+	for i := 0; i < int(length); i++ {
+		moves[i] = direction
+	}
+
+	for i := 1; i < int(length); i++ {
+		first := b.CollisionCheckMoves(append(moves[:i], direction.Tangential())...)
+		second := b.CollisionCheckMoves(append(moves[:i], direction.Tangential().Opposite())...)
+
+		if first && second {
+			return true
+		}
+	}
+
+	return false
 }
 
-func (b *Base) PrintField() string {
+func (b *Base) CollisionCheckMoves(moves ...gpntron.Move) bool {
+	check := b.playerPosition.OffsetD(moves...)
+	// log.Printf("checking %v", check)
+	id := b.Arena.Field(check)
 
-	var buffer strings.Builder
+	return id.Empty()
+}
 
-	buffer.WriteRune('\n')
+func (b *Base) CollisionLookahead(move gpntron.Move, lookahead uint) bool {
+	for distance := uint(1); distance <= lookahead; distance++ {
+		check := b.playerPosition.Offset(move, distance)
+		id := b.Arena.Field(check)
+		// log.Printf("checking direction %s, my coord: %v with distance: %d, coordinate: %v, field value: %d", move, b.playerPosition, distance, check, id)
 
-	for i := 0; i < b.height; i++ {
-		for j := 0; j < b.width; j++ {
+		if !id.Empty() {
+			return true
+		}
+	}
 
-			if v, ok := b.field[Coordinate{X: j, Y: i}]; ok {
-				if v == b.id {
-					buffer.WriteString("🟥")
-				} else {
-					buffer.WriteString("🟫")
+	return false
+}
+
+func (b *Base) ChooseNonColliding() gpntron.Move {
+
+	type scoredMove struct {
+		Score int
+		Move  gpntron.Move
+	}
+
+	possibleMoves := []scoredMove{}
+
+	// select moves where we cant die
+	for _, move := range gpntron.Directions {
+		// skip if collision is up ahead
+		if b.CollisionLookahead(move, 1) {
+			continue
+		} else {
+			possibleMoves = append(possibleMoves, scoredMove{
+				Score: 100,
+				Move:  move,
+			})
+		}
+	}
+
+	for _, move := range possibleMoves {
+		// check matching corners
+		for _, corner := range Corners {
+			if slices.Contains(corner, move.Move) {
+				if b.CollisionCheckMoves(corner...) {
+					move.Score /= 2
 				}
-			} else {
-				buffer.WriteString("⬛")
 			}
 		}
-		buffer.WriteRune('\n')
+
+		// reward paths with a lot of freedom
+		for i := 10; i >= 2; i-- {
+			if !b.CollisionLookahead(move.Move, uint(i)) {
+				move.Score += i * 4
+				break
+			}
+		}
+
+		// check tunneling
 	}
 
-	return buffer.String()
+	if len(possibleMoves) == 0 {
+		log.Print("were dead :(")
+		return gpntron.Nothing
+	}
+
+	best := slices.MaxFunc[[]scoredMove](possibleMoves, func(a, b scoredMove) int {
+		return cmp.Compare(a.Score, b.Score)
+	})
+	log.Printf("chosing %s with score %d", best.Move, best.Score)
+
+	return best.Move
 }

@@ -2,6 +2,8 @@ package gpntron
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -16,41 +18,37 @@ type ClientOptions struct {
 
 func NewClient(options ClientOptions) Client {
 	return &client{
-		done:          false,
 		ClientOptions: options,
 	}
 }
 
 type Client interface {
-	Run(Receiver)
-	Disconnect()
+	Run(context.Context, Receiver) error
 }
 
 var _ Client = &client{}
 
 type client struct {
-	done bool
 	ClientOptions
 }
 
-func (c *client) Disconnect() {
-	c.done = true
-	log.Println("Disconnecting")
-}
-
-func (c *client) Run(receiver Receiver) {
+func (c *client) Run(ctx context.Context, receiver Receiver) error {
 
 	var wg sync.WaitGroup
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", c.Host)
 	if err != nil {
-		log.Fatal("ResolveTCPAddr failed:", err.Error())
+		return fmt.Errorf("ResolveTCPAddr failed: %w", err)
 	}
 
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		log.Fatal("Dial failed:", err.Error())
+		return fmt.Errorf("Dial failed %w:", err)
 	}
+
+	// Set a deadline for reading. Read operation will fail if no data
+	// is received after deadline.
+	conn.SetReadDeadline(time.Now().Add(c.TimeoutDuration))
 
 	defer conn.Close()
 
@@ -59,29 +57,40 @@ func (c *client) Run(receiver Receiver) {
 		Receiver: receiver,
 	}
 
+	commandChannel := make(chan string)
+
+	// consumer
 	wg.Add(1)
-
 	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				conn.Close()
+				return
+			case command := <-commandChannel:
+				execute(command, receiver, ex)
+			}
+		}
+	}()
 
+	// generator
+	wg.Add(1)
+	go func() {
 		defer wg.Done()
 
 		bufReader := bufio.NewReader(conn)
 
-		for !c.done {
-			// Set a deadline for reading. Read operation will fail if no data
-			// is received after deadline.
-			conn.SetReadDeadline(time.Now().Add(c.TimeoutDuration))
-
+		for {
 			// Read tokens until delimeter occurs
 			bytes, err := bufReader.ReadBytes(PackageEnd)
 			if err != nil {
-				log.Println(err)
+				log.Printf("error reading new commands: %s", err)
 				break
 			}
 
 			command := string(bytes)[:len(bytes)-1]
-
-			execute(command, receiver, ex)
+			commandChannel <- command
 		}
 	}()
 
@@ -90,4 +99,5 @@ func (c *client) Run(receiver Receiver) {
 
 	wg.Wait()
 	log.Print("Client finished")
+	return nil
 }
