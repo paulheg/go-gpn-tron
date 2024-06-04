@@ -169,30 +169,58 @@ func (b *Base) ChooseNonColliding() gpntron.Move {
 		}
 	}
 
-	for _, move := range possibleMoves {
+	for i := 0; i < len(possibleMoves); i++ {
+
+		move := &possibleMoves[i]
+
 		// check matching corners
-		for _, corner := range Corners {
-			if slices.Contains(corner, move.Move) {
-				if b.CollisionCheckMoves(corner...) {
-					move.Score /= 2
-				}
+		// for _, v := range Corners {
+		// 	if b.CollisionCheckMoves(v...) {
+		// 		move.Score /= 2
+		// 	}
+		// }
+
+		for _, dir := range gpntron.Directions {
+			if dir != move.Move && !b.CollisionCheckMoves(move.Move, dir) {
+				// for i := 0; i < len(possibleMoves); i++ {
+				// 	if possibleMoves[i].Move == dir {
+				// 		possibleMoves[i].Score += 6
+				// 	}
+				// }
+
+				move.Score += 5
 			}
 		}
 
 		// reward paths with a lot of freedom
 		for i := 10; i >= 2; i-- {
 			if !b.CollisionLookahead(move.Move, uint(i)) {
-				move.Score += i * 4
+				additionalScore := i * 4
+				log.Printf("Adding lookahead score to %s: %d", move.Move, additionalScore)
+				move.Score += additionalScore
 				break
 			}
 		}
 
 		// check tunneling
+		unableToReverse := 0
+		for i := 1; i < 5; i++ {
+			if !b.TunnelCollision(move.Move, uint(i)) {
+				unableToReverse += 5
+			}
+		}
+		log.Printf("Removing score for possible tunnel: %d", unableToReverse)
+		move.Score -= unableToReverse
+
 	}
 
 	if len(possibleMoves) == 0 {
 		log.Print("were dead :(")
 		return gpntron.Nothing
+	}
+
+	for _, v := range possibleMoves {
+		log.Printf("move %s, score %d", v.Move, v.Score)
 	}
 
 	best := slices.MaxFunc[[]scoredMove](possibleMoves, func(a, b scoredMove) int {
